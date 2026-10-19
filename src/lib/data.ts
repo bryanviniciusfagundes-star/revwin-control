@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { House, Operation, OperationStatus, Period } from './types';
+import type { BetsOperator, House, Operation, OperationStatus, Period } from './types';
 import { parseRate, type ImportOptions, type PlayerRecord, type Source } from './csv';
 
 /** Traduz erros do banco para mensagens claras. */
@@ -35,7 +35,7 @@ export async function fetchHouses(): Promise<House[]> {
 export async function fetchOperations(): Promise<Operation[]> {
   const { data, error } = await supabase
     .from('operations')
-    .select('*, operation_houses(houses(id,name))')
+    .select('*, operation_houses(bets_operator, bets_min_usd, houses(id,name))')
     .order('name');
   if (error) throw error;
   return (data ?? []).map((o: any) => ({
@@ -48,8 +48,8 @@ export async function fetchOperations(): Promise<Operation[]> {
     status: o.status,
     created_at: o.created_at,
     houses: (o.operation_houses ?? [])
-      .map((oh: any) => oh.houses)
-      .filter(Boolean)
+      .filter((oh: any) => oh.houses)
+      .map((oh: any) => ({ ...oh.houses, bets_operator: oh.bets_operator, bets_min_usd: Number(oh.bets_min_usd) }))
       .sort((a: House, b: House) => a.name.localeCompare(b.name)),
   }));
 }
@@ -62,7 +62,7 @@ export interface OperationInput {
   baseline_usd: number;
   cpa_usd: number;
   status: OperationStatus;
-  houseNames: string[];
+  houses: { name: string; bets_operator: BetsOperator; bets_min_usd: number }[];
 }
 
 export async function saveOperation(input: OperationInput) {
@@ -86,7 +86,8 @@ export async function saveOperation(input: OperationInput) {
   }
 
   // Garante que cada casa existe (sem duplicar por maiúsculas/minúsculas)
-  const names = [...new Map(input.houseNames.map((h) => [h.trim().toLowerCase(), h.trim()])).values()].filter(Boolean);
+  const rules = new Map(input.houses.map((h) => [h.name.trim().toLowerCase(), h]));
+  const names = [...new Map(input.houses.map((h) => [h.name.trim().toLowerCase(), h.name.trim()])).values()].filter(Boolean);
   const existing = await fetchHouses();
   const byName = new Map(existing.map((h) => [h.name.toLowerCase(), h]));
   const missing = names.filter((nm) => !byName.has(nm.toLowerCase()));
@@ -107,8 +108,20 @@ export async function saveOperation(input: OperationInput) {
     const { error } = await supabase.from('operation_houses').delete().eq('operation_id', opId).in('house_id', toRemove);
     if (error) throw error;
   }
+  const ruleFor = (houseId: string) => {
+    const name = [...byName.values()].find((h) => h.id === houseId)!.name.toLowerCase();
+    const r = rules.get(name)!;
+    return { bets_operator: r.bets_operator, bets_min_usd: r.bets_min_usd };
+  };
   if (toAdd.length) {
-    const { error } = await supabase.from('operation_houses').insert(toAdd.map((house_id) => ({ operation_id: opId, house_id })));
+    const { error } = await supabase
+      .from('operation_houses')
+      .insert(toAdd.map((house_id) => ({ operation_id: opId, house_id, ...ruleFor(house_id) })));
+    if (error) throw error;
+  }
+  // atualiza a regra de aposta das casas que já estavam vinculadas
+  for (const house_id of wanted.filter((id) => current.has(id))) {
+    const { error } = await supabase.from('operation_houses').update(ruleFor(house_id)).eq('operation_id', opId).eq('house_id', house_id);
     if (error) throw error;
   }
 }

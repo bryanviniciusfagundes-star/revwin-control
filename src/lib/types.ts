@@ -11,6 +11,15 @@ export interface House {
   name: string;
 }
 
+export type BetsOperator = 'gt' | 'gte';
+export const BETS_OPERATOR_LABEL: Record<BetsOperator, string> = { gt: '>', gte: '≥' };
+
+/** Casa dentro de uma operação, com a regra de aposta para qualificar. */
+export interface OperationHouse extends House {
+  bets_operator: BetsOperator;
+  bets_min_usd: number;
+}
+
 export interface Operation {
   id: string;
   name: string;
@@ -20,7 +29,7 @@ export interface Operation {
   cpa_usd: number;
   status: OperationStatus;
   created_at: string;
-  houses: House[];
+  houses: OperationHouse[];
 }
 
 /** Valores ausentes são sempre null — nunca 0. */

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import { deleteOperation, fetchHouses, fetchOperations, friendlyError, saveOperation } from '../lib/data';
-import { STATUS_LABEL, type House, type Operation, type OperationStatus } from '../lib/types';
+import { BETS_OPERATOR_LABEL, STATUS_LABEL, type BetsOperator, type House, type Operation, type OperationStatus } from '../lib/types';
 import { fmtUSD, parseNum } from '../lib/format';
 import { Alert, Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner } from '../components/ui';
 
@@ -15,8 +15,14 @@ interface FormState {
   baseline: string;
   cpa: string;
   status: OperationStatus;
-  houses: string[];
+  houses: HouseRule[];
 }
+interface HouseRule {
+  name: string;
+  op: BetsOperator;
+  min: string; // texto digitado (USD)
+}
+const ruleText = (op: BetsOperator, min: number) => `aposta ${BETS_OPERATOR_LABEL[op]} ${fmtUSD(min)}`;
 const EMPTY: FormState = { name: '', expert: '', geo: '', baseline: '', cpa: '', status: 'ativa', houses: [] };
 
 export default function Operations() {
@@ -63,7 +69,7 @@ export default function Operations() {
       baseline: String(op.baseline_usd),
       cpa: String(op.cpa_usd),
       status: op.status,
-      houses: op.houses.map((h) => h.name),
+      houses: op.houses.map((h) => ({ name: h.name, op: h.bets_operator, min: String(h.bets_min_usd) })),
     });
 
   return (
@@ -108,11 +114,15 @@ export default function Operations() {
                     <td className="px-4 py-3 font-mono text-xs">{op.geo}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
-                        {op.houses.length ? op.houses.map((h) => <Badge key={h.id}>{h.name}</Badge>) : <span className="text-zinc-600">—</span>}
+                        {op.houses.length ? op.houses.map((h) => (
+                          <Badge key={h.id}>
+                            {h.name}<span className="ml-1 text-zinc-500">· {ruleText(h.bets_operator, h.bets_min_usd)}</span>
+                          </Badge>
+                        )) : <span className="text-zinc-600">—</span>}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{fmtUSD(op.baseline_usd)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{fmtUSD(op.cpa_usd)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{fmtUSD(op.baseline_usd)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{fmtUSD(op.cpa_usd)}</td>
                     <td className="px-4 py-3"><Badge tone={statusTone[op.status]}>{STATUS_LABEL[op.status]}</Badge></td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
@@ -167,10 +177,10 @@ function OperationForm({
   function addHouse() {
     const name = houseDraft.trim();
     if (!name) return;
-    if (!f.houses.some((h) => h.toLowerCase() === name.toLowerCase())) {
+    if (!f.houses.some((h) => h.name.toLowerCase() === name.toLowerCase())) {
       // reaproveita a grafia já cadastrada, se existir
       const existing = allHouses.find((h) => h.name.toLowerCase() === name.toLowerCase());
-      set('houses', [...f.houses, existing?.name ?? name]);
+      set('houses', [...f.houses, { name: existing?.name ?? name, op: 'gt', min: '0' }]);
     }
     setHouseDraft('');
   }
@@ -185,8 +195,15 @@ function OperationForm({
     e.preventDefault();
     setError('');
     try {
-      const houses = houseDraft.trim() ? [...f.houses, houseDraft.trim()] : f.houses;
+      const houses = houseDraft.trim() && !f.houses.some((h) => h.name.toLowerCase() === houseDraft.trim().toLowerCase())
+        ? [...f.houses, { name: houseDraft.trim(), op: 'gt' as BetsOperator, min: '0' }]
+        : f.houses;
       if (!houses.length) throw new Error('Adicione pelo menos uma casa de apostas.');
+      const houseRules = houses.map((h) => {
+        const min = parseNum(h.min, { label: `Aposta mínima (${h.name})`, min: 0 });
+        if (min == null) throw new Error(`Informe o valor da aposta para ${h.name}.`);
+        return { name: h.name, bets_operator: h.op, bets_min_usd: min };
+      });
       const baseline = parseNum(f.baseline, { label: 'Baseline', min: 0 });
       const cpa = parseNum(f.cpa, { label: 'CPA', min: 0 });
       if (baseline == null) throw new Error('Informe o baseline em USD.');
@@ -200,7 +217,7 @@ function OperationForm({
         baseline_usd: baseline,
         cpa_usd: cpa,
         status: f.status,
-        houseNames: houses,
+        houses: houseRules,
       });
       onSaved();
     } catch (err) {
@@ -238,7 +255,7 @@ function OperationForm({
           </Select>
         </Field>
 
-        <Field label="Casas de apostas" hint="Digite e pressione Enter. Casas já cadastradas aparecem como sugestão.">
+        <Field label="Casas de apostas" hint="Digite e pressione Enter. Depois defina a regra de aposta de cada casa.">
           <div className="flex gap-2">
             <Input list="houses-list" value={houseDraft} onChange={(e) => setHouseDraft(e.target.value)} onKeyDown={onHouseKey} placeholder="Ex.: Melbet" />
             <Button type="button" variant="ghost" onClick={addHouse}>Adicionar</Button>
@@ -248,15 +265,28 @@ function OperationForm({
           </datalist>
         </Field>
         {f.houses.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {f.houses.map((h) => (
-              <span key={h} className="inline-flex items-center gap-1 rounded-md bg-zinc-800 py-1 pl-2.5 pr-1 text-xs">
-                {h}
-                <button type="button" onClick={() => set('houses', f.houses.filter((x) => x !== h))} className="rounded p-0.5 text-zinc-400 hover:text-zinc-100" aria-label={`Remover ${h}`}>
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
+          <div className="space-y-2">
+            <div className="text-xs text-zinc-500">Qualifica (QFTD) quando: soma dos depósitos ≥ baseline <b>e</b> soma das apostas atende a regra da casa.</div>
+            {f.houses.map((h, i) => {
+              const upd = (patch: Partial<HouseRule>) => set('houses', f.houses.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+              return (
+                <div key={h.name} className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+                  <span className="min-w-0 flex-1 truncate pl-1 text-sm">{h.name}</span>
+                  <span className="text-xs text-zinc-500">Aposta</span>
+                  <Select aria-label={`Regra de aposta ${h.name}`} value={h.op} onChange={(e) => upd({ op: e.target.value as BetsOperator })} className="w-auto py-1.5">
+                    <option value="gt">maior que</option>
+                    <option value="gte">maior ou igual a</option>
+                  </Select>
+                  <div className="relative w-24">
+                    <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-zinc-500">US$</span>
+                    <Input aria-label={`Aposta mínima ${h.name}`} inputMode="decimal" value={h.min} onChange={(e) => upd({ min: e.target.value })} className="py-1.5 pl-9" />
+                  </div>
+                  <button type="button" onClick={() => set('houses', f.houses.filter((_, j) => j !== i))} className="rounded p-1 text-zinc-400 hover:text-zinc-100" aria-label={`Remover ${h.name}`}>
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
