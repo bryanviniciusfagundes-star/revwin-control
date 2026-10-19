@@ -34,6 +34,7 @@ export interface Period {
   leads: number | null;
   reached_pitch: number | null;
   accessed_channel: number | null;
+  sendpulse_deposits: number | null;
   total_revenue_usd: number | null;
   notes: string | null;
   // vindos da importação (Etapas 2/3)
@@ -50,6 +51,7 @@ export type NumericPeriodKey =
   | 'leads'
   | 'reached_pitch'
   | 'accessed_channel'
+  | 'sendpulse_deposits'
   | 'total_revenue_usd'
   | 'registrations'
   | 'ftd_ia'

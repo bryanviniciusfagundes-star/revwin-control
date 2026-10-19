@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Operations from './pages/Operations';
 import Results from './pages/Results';
 import ComingSoon from './pages/ComingSoon';
+import ImportPage from './pages/Import';
 
 export default function App() {
   const { session, loading } = useAuth();
@@ -25,7 +26,7 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="operacoes" element={<Operations />} />
         <Route path="resultados" element={<Results />} />
-        <Route path="importar" element={<ComingSoon title="Importar e Conferir" stage="Etapa 2" />} />
+        <Route path="importar" element={<ImportPage />} />
         <Route path="historico" element={<ComingSoon title="Histórico" stage="Etapa 3" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

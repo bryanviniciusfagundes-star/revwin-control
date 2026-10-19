@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { House, Operation, OperationStatus, Period } from './types';
+import { parseRate, type ImportOptions, type PlayerRecord, type Source } from './csv';
 
 /** Traduz erros do banco para mensagens claras. */
 export function friendlyError(e: unknown): string {
@@ -10,7 +11,10 @@ export function friendlyError(e: unknown): string {
     case '23P01':
       return 'Já existe um registro dessa operação e casa com período sobreposto. Edite o registro existente.';
     case '23503':
-      return 'Não é possível excluir: existem resultados vinculados. Altere o status para "Encerrada".';
+      return 'Não é possível excluir: existem dados vinculados.';
+    case 'RV001':
+    case 'RV002':
+      return err.message ?? 'Importação recusada.';
     case '23514':
       return 'Algum valor está fora do permitido (datas invertidas ou número negativo).';
     default:
@@ -121,6 +125,7 @@ function normalizePeriod(p: any): Period {
     leads: n(p.leads),
     reached_pitch: n(p.reached_pitch),
     accessed_channel: n(p.accessed_channel),
+    sendpulse_deposits: n(p.sendpulse_deposits),
     total_revenue_usd: n(p.total_revenue_usd),
     registrations: n(p.registrations),
     ftd_ia: n(p.ftd_ia),
@@ -160,6 +165,7 @@ export interface ManualPeriodInput {
   leads: number | null;
   reached_pitch: number | null;
   accessed_channel: number | null;
+  sendpulse_deposits: number | null;
   total_revenue_usd: number | null;
   notes: string | null;
 }
@@ -178,5 +184,113 @@ export async function saveManualPeriod(input: ManualPeriodInput) {
 
 export async function deletePeriod(id: string) {
   const { error } = await supabase.from('periods').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------------- Importações (Etapa 2) ----------------
+
+export interface ImportRow {
+  id: string;
+  period_id: string;
+  source: Source;
+  file_name: string;
+  row_count: number;
+  player_count: number;
+  deposit_kind: 'first' | 'total';
+  created_at: string;
+}
+
+export async function fetchImports(periodIds: string[]): Promise<ImportRow[]> {
+  if (!periodIds.length) return [];
+  const { data, error } = await supabase
+    .from('imports')
+    .select('id,period_id,source,file_name,row_count,player_count,deposit_kind,created_at')
+    .in('period_id', periodIds)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as ImportRow[];
+}
+
+/** Último mapeamento usado para esta casa + fonte (reutilização). */
+export async function fetchSavedMapping(houseId: string, source: Source): Promise<ImportOptions | null> {
+  const { data, error } = await supabase
+    .from('imports')
+    .select('mapping, periods!inner(house_id)')
+    .eq('source', source)
+    .eq('periods.house_id', houseId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return (data?.[0]?.mapping as ImportOptions) ?? null;
+}
+
+/** IDs desta fonte que já aparecem em outros períodos da mesma operação + casa. */
+export async function fetchPlayersInOtherPeriods(operationId: string, houseId: string, source: Source, excludePeriodId?: string) {
+  let q = supabase.from('periods').select('id').eq('operation_id', operationId).eq('house_id', houseId);
+  if (excludePeriodId) q = q.neq('id', excludePeriodId);
+  const { data: ps, error } = await q;
+  if (error) throw error;
+  const ids = (ps ?? []).map((p) => p.id as string);
+  if (!ids.length) return new Set<string>();
+  const out = new Set<string>();
+  const page = 1000;
+  for (let from = 0; ; from += page) {
+    const { data, error: e } = await supabase
+      .from('player_records')
+      .select('player_id')
+      .eq('source', source)
+      .in('period_id', ids)
+      .range(from, from + page - 1);
+    if (e) throw e;
+    (data ?? []).forEach((r) => out.add(r.player_id as string));
+    if (!data || data.length < page) break;
+  }
+  return out;
+}
+
+export interface SaveImportInput {
+  operationId: string;
+  houseId: string;
+  start: string;
+  end: string;
+  source: Source;
+  fileName: string;
+  fileHash: string;
+  raw: string;
+  options: ImportOptions;
+  rowCount: number;
+  records: PlayerRecord[];
+  replace: boolean;
+}
+
+/** Grava tudo numa única transação no banco (tudo ou nada). Retorna o id do período. */
+export async function saveImport(i: SaveImportInput): Promise<string> {
+  const rates: Record<string, number> = {};
+  Object.entries(i.options.rates).forEach(([k, v]) => {
+    const n = parseRate(v);
+    if (n != null) rates[k] = n;
+  });
+  const { data, error } = await supabase.rpc('save_import', {
+    p_operation_id: i.operationId,
+    p_house_id: i.houseId,
+    p_start: i.start,
+    p_end: i.end,
+    p_source: i.source,
+    p_file_name: i.fileName,
+    p_file_hash: i.fileHash,
+    p_raw: i.raw,
+    p_mapping: i.options,
+    p_deposit_kind: i.options.depositKind,
+    p_rates: rates,
+    p_row_count: i.rowCount,
+    p_records: i.records,
+    p_replace: i.replace,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function deleteImport(id: string) {
+  const { error } = await supabase.from('imports').delete().eq('id', id);
   if (error) throw error;
 }

@@ -48,7 +48,9 @@ export default function Operations() {
       await deleteOperation(op.id);
       await load();
     } catch (e) {
-      setError(friendlyError(e));
+      setError((e as { code?: string }).code === '23503'
+        ? 'Não é possível excluir: esta operação tem resultados registrados. Altere o status para "Encerrada".'
+        : friendlyError(e));
     }
   }
 

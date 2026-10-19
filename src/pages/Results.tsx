@@ -16,6 +16,7 @@ interface FormState {
   leads: string;
   reached_pitch: string;
   accessed_channel: string;
+  sendpulse: string;
   total_revenue: string;
   notes: string;
 }
@@ -28,6 +29,7 @@ const blank = (): FormState => ({
   leads: '',
   reached_pitch: '',
   accessed_channel: '',
+  sendpulse: '',
   total_revenue: '',
   notes: '',
 });
@@ -93,6 +95,7 @@ export default function Results() {
       leads: numToField(p.leads),
       reached_pitch: numToField(p.reached_pitch),
       accessed_channel: numToField(p.accessed_channel),
+      sendpulse: numToField(p.sendpulse_deposits),
       total_revenue: numToField(p.total_revenue_usd),
       notes: p.notes ?? '',
     });
@@ -114,6 +117,7 @@ export default function Results() {
       const leads = parseNum(f.leads, { label: 'Leads', integer: true, min: 0 });
       const reached = parseNum(f.reached_pitch, { label: 'Chegou ao pitch', integer: true, min: 0 });
       const channel = parseNum(f.accessed_channel, { label: 'Acessou canal', integer: true, min: 0 });
+      const sendpulse = parseNum(f.sendpulse, { label: 'Depósitos confirmados (SendPulse)', integer: true, min: 0 });
       const revenue = parseNum(f.total_revenue, { label: 'Total faturado' });
       if (leads != null && reached != null && reached > leads) throw new Error('"Chegou ao pitch" não pode ser maior que Leads.');
       setSaving(true);
@@ -126,6 +130,7 @@ export default function Results() {
         leads,
         reached_pitch: reached,
         accessed_channel: channel,
+        sendpulse_deposits: sendpulse,
         total_revenue_usd: revenue,
         notes: f.notes.trim() || null,
       });
@@ -146,7 +151,9 @@ export default function Results() {
       if (editing?.id === p.id) reset();
       await load();
     } catch (e) {
-      setError(friendlyError(e));
+      setError((e as { code?: string }).code === '23503'
+        ? 'Este período tem importações de CSV. Exclua as importações em "Importar e Conferir" antes.'
+        : friendlyError(e));
     }
   }
 
@@ -208,7 +215,7 @@ export default function Results() {
               </Field>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
               <Field label="Leads">
                 <Input inputMode="numeric" value={f.leads} onChange={(e) => set('leads', e.target.value)} />
               </Field>
@@ -217,6 +224,9 @@ export default function Results() {
               </Field>
               <Field label="Acessou canal">
                 <Input inputMode="numeric" value={f.accessed_channel} onChange={(e) => set('accessed_channel', e.target.value)} />
+              </Field>
+              <Field label="Depósitos SendPulse" hint="Confirmados no SendPulse">
+                <Input inputMode="numeric" value={f.sendpulse} onChange={(e) => set('sendpulse', e.target.value)} />
               </Field>
               <Field label="Total faturado (USD)">
                 <Input inputMode="decimal" value={f.total_revenue} onChange={(e) => set('total_revenue', e.target.value)} />
@@ -268,6 +278,7 @@ export default function Results() {
                   <th className="px-4 py-3 text-right font-medium">Leads</th>
                   <th className="px-4 py-3 text-right font-medium">Pitch</th>
                   <th className="px-4 py-3 text-right font-medium">Canal</th>
+                  <th className="px-4 py-3 text-right font-medium">SendPulse</th>
                   <th className="px-4 py-3 text-right font-medium">Faturado</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -283,6 +294,7 @@ export default function Results() {
                     <td className="px-4 py-3 text-right tabular-nums">{fmtInt(p.leads)}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{fmtInt(p.reached_pitch)}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{fmtInt(p.accessed_channel)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{fmtInt(p.sendpulse_deposits)}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{fmtUSD(p.total_revenue_usd)}</td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
