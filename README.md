@@ -23,7 +23,8 @@ src/
   config.ts            ← URL e chave do Supabase
   lib/metrics.ts       ← regras das porcentagens (edite aqui para mudar a base de cálculo)
   lib/data.ts          ← todas as leituras/gravações no banco
-  pages/               ← Dashboard, Operações, Registrar Resultados, Login
+  lib/csv.ts           ← leitura dos CSVs (números, datas, moedas, mapeamento)
+  pages/               ← Dashboard, Operações, Registrar Resultados, Importar, Login
 supabase/migrations/   ← SQL de cada etapa
 ```
 
@@ -33,3 +34,10 @@ supabase/migrations/   ← SQL de cada etapa
 - Campos não informados ficam vazios (NULL) e aparecem como "—"; nunca viram zero.
 - Nomes de operações e casas não se repetem (ignorando maiúsculas/minúsculas).
 - Cada linha só é acessível pelo usuário logado (RLS).
+
+## Importação de CSV (Etapa 2)
+- Uma importação por fonte (IA ou casa) em cada período; para trocar o arquivo, marque "substituir".
+- O mesmo arquivo (mesmo conteúdo) não pode ser importado duas vezes.
+- O arquivo original e as linhas de cada jogador ficam guardados no banco.
+- FTD = jogador com depósito maior que zero. A soma de depósitos vem do arquivo da casa e fica vazia se faltar taxa de conversão.
+- O mapeamento de colunas é reaplicado na próxima importação da mesma casa.

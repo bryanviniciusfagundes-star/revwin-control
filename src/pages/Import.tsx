@@ -217,6 +217,14 @@ function ImportPanel({ source, ctx, existing, onSaved }: { source: Source; ctx: 
 
   const set = <K extends keyof ImportOptions>(k: K, v: ImportOptions[K]) => setOpt((o) => ({ ...o, [k]: v }));
 
+  // ao trocar o período, mensagens da tentativa anterior deixam de valer
+  const ctxKey = ctx ? `${ctx.start}|${ctx.end}` : '';
+  useEffect(() => {
+    setError('');
+    setOk('');
+    setReplace(false);
+  }, [ctxKey]);
+
   async function onFile(f: File | undefined) {
     setError('');
     setOk('');
@@ -349,7 +357,7 @@ function ImportPanel({ source, ctx, existing, onSaved }: { source: Source; ctx: 
           </div>
 
           {/* Opções */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="O valor de depósito é">
               <Select aria-label="Tipo do depósito" value={opt.depositKind} onChange={(e) => set('depositKind', e.target.value as ImportOptions['depositKind'])}>
                 <option value="first">Primeiro depósito</option>
@@ -382,7 +390,7 @@ function ImportPanel({ source, ctx, existing, onSaved }: { source: Source; ctx: 
           {st && st.currencies.some((c) => c !== 'USD') && (
             <div>
               <h3 className="mb-2 text-sm font-medium text-zinc-300">Conversão para USD</h3>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 {st.currencies.filter((c) => c !== 'USD').map((c) => {
                   const r = parseRate(opt.rates[c]);
                   return (
