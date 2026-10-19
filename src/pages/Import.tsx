@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import Reconciliation from '../components/Reconciliation';
 import { AlertTriangle, CheckCircle2, FileText, Trash2, Upload } from 'lucide-react';
 import {
   deleteImport,
@@ -48,10 +49,12 @@ export default function ImportPage() {
   const [ops, setOps] = useState<Operation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [opId, setOpId] = useState('');
-  const [houseId, setHouseId] = useState('');
-  const [start, setStart] = useState(localISO(-6));
-  const [end, setEnd] = useState(localISO(0));
+  // aceita ?op=&house=&start=&end= (vindo do Histórico)
+  const [params] = useSearchParams();
+  const [opId, setOpId] = useState(params.get('op') ?? '');
+  const [houseId, setHouseId] = useState(params.get('house') ?? '');
+  const [start, setStart] = useState(params.get('start') ?? localISO(-6));
+  const [end, setEnd] = useState(params.get('end') ?? localISO(0));
   const [overlapping, setOverlapping] = useState<Period[]>([]);
   const [imports, setImports] = useState<ImportRow[]>([]);
   const [checking, setChecking] = useState(false);
@@ -114,7 +117,7 @@ export default function ImportPage() {
 
   return (
     <>
-      <PageHeader title="Importar e Conferir" subtitle="Envie o CSV da IA e o CSV da casa para o período. A conferência entre os dois vem na Etapa 3." />
+      <PageHeader title="Importar e Conferir" subtitle="Envie o CSV da IA e o CSV da casa do período. Com os dois importados, a conferência aparece logo abaixo." />
 
       <Card className="mb-4 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Operação">
@@ -178,9 +181,10 @@ export default function ImportPage() {
             ))}
           </div>
           {exact && (
-            <div className="grid grid-cols-3 gap-3 border-t border-zinc-800 px-4 py-3 text-sm">
+            <div className="grid grid-cols-2 gap-3 border-t border-zinc-800 px-4 py-3 text-sm sm:grid-cols-4">
               <div><div className="text-xs text-zinc-500">FTD IA</div><div className="font-mono">{fmtInt(exact.ftd_ia)}</div></div>
               <div><div className="text-xs text-zinc-500">FTD painel</div><div className="font-mono">{fmtInt(exact.ftd_panel)}</div></div>
+              <div><div className="text-xs text-zinc-500">QFTD (conferência salva)</div><div className="font-mono">{fmtInt(exact.qftd)}</div></div>
               <div><div className="text-xs text-zinc-500">Soma de depósitos (casa)</div><div className="font-mono">{fmtUSD(exact.deposits_sum_usd)}</div></div>
             </div>
           )}
@@ -198,6 +202,12 @@ export default function ImportPage() {
           />
         ))}
       </div>
+
+      {ctx && exact && op && (
+        <div className="mt-8">
+          <Reconciliation period={exact} operation={op} houseId={houseId} imports={imports} onSaved={refresh} />
+        </div>
+      )}
     </>
   );
 }

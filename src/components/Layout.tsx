@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Briefcase, ClipboardList, FileUp, History, LayoutDashboard, LogOut, Menu, X } from 'lucide-react';
+import { Briefcase, ClipboardList, FileUp, History, LayoutDashboard, LogOut, Menu, Settings, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
-import { cx } from './ui';
+import { Alert, Button, Field, Input, Modal, cx } from './ui';
+import { DEFAULT_TOLERANCE, fetchTolerance, friendlyError, saveTolerance } from '../lib/data';
+import { parseNum } from '../lib/format';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -25,8 +27,51 @@ function Brand() {
   );
 }
 
+function SettingsModal({ onClose }: { onClose: () => void }) {
+  const [tol, setTol] = useState('');
+  const [error, setError] = useState('');
+  const [ok, setOk] = useState(false);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    fetchTolerance()
+      .then((t) => setTol(String(t).replace('.', ',')))
+      .catch((e) => setError(friendlyError(e)));
+  }, []);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setError('');
+    setOk(false);
+    try {
+      const v = parseNum(tol, { label: 'Tolerância', min: 0 });
+      setSaving(true);
+      await saveTolerance(v ?? DEFAULT_TOLERANCE);
+      setOk(true);
+    } catch (err) {
+      setError(friendlyError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <Modal open title="Configurações" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <Field label="Tolerância de divergência (USD)" hint="Diferenças de depósito acima deste valor viram divergência. Padrão: US$ 1,00.">
+          <Input aria-label="Tolerância" inputMode="decimal" value={tol} onChange={(e) => setTol(e.target.value)} />
+        </Field>
+        {error && <Alert>{error}</Alert>}
+        {ok && <Alert kind="success">Configuração salva. Conferências já salvas mantêm a tolerância usada; salve-as de novo para recalcular.</Alert>}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>Fechar</Button>
+          <Button type="submit" loading={saving}>Salvar</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function Nav({ onNavigate }: { onNavigate?: () => void }) {
   const { session } = useAuth();
+  const [settings, setSettings] = useState(false);
   return (
     <div className="flex h-full flex-col">
       <Brand />
@@ -50,6 +95,13 @@ function Nav({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
       <div className="border-t border-zinc-800 pt-4">
+        <button
+          onClick={() => setSettings(true)}
+          className="mb-2 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+        >
+          <Settings className="h-4 w-4" /> Configurações
+        </button>
+        {settings && <SettingsModal onClose={() => setSettings(false)} />}
         <div className="truncate px-3 text-xs text-zinc-500">{session?.user.email}</div>
         <button
           onClick={() => supabase.auth.signOut()}

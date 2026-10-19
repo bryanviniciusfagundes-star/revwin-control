@@ -24,6 +24,7 @@ src/
   lib/metrics.ts       ← regras das porcentagens (edite aqui para mudar a base de cálculo)
   lib/data.ts          ← todas as leituras/gravações no banco
   lib/csv.ts           ← leitura dos CSVs (números, datas, moedas, mapeamento)
+  lib/recon.ts         ← regras da conferência IA × casa
   pages/               ← Dashboard, Operações, Registrar Resultados, Importar, Login
 supabase/migrations/   ← SQL de cada etapa
 ```
@@ -41,3 +42,12 @@ supabase/migrations/   ← SQL de cada etapa
 - O arquivo original e as linhas de cada jogador ficam guardados no banco.
 - FTD = jogador com depósito maior que zero. A soma de depósitos vem do arquivo da casa e fica vazia se faltar taxa de conversão.
 - O mapeamento de colunas é reaplicado na próxima importação da mesma casa.
+
+## Conferência (Etapa 3)
+- FTD = todo jogador com depósito > 0, independente de status.
+- IDs que não se encontram não são tratados como jogadores diferentes: aparecem como "Só na IA", "Só na casa" ou "Casa não mostra depósito".
+- Baseline e QFTD usam os dados da casa: soma dos depósitos ≥ baseline da operação e apostas conforme a regra da casa (> ou ≥ um valor em USD).
+- Valores só são comparados quando equivalentes: 1º depósito × 1º depósito, ou total com 1 único depósito. Sem conversão confiável, o par fica "Não comparável".
+- A taxa implícita da casa (mediana dos jogadores com 1 depósito) aparece como sugestão e pode ser aplicada com "Usar".
+- Tolerância de divergência em Configurações (padrão US$ 1,00).
+- Uma conferência salva por casa e período; se um CSV for trocado, ela aparece como desatualizada.

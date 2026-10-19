@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type { BetsOperator, FunnelPeriod, House, Operation, OperationStatus, Period } from './types';
 import { parseRate, type ImportOptions, type PlayerRecord, type Source } from './csv';
+import type { RecItem, RecRecord, RecSummary } from './recon';
 
 /** Traduz erros do banco para mensagens claras. */
 export function friendlyError(e: unknown): string {
@@ -233,6 +234,7 @@ export interface ImportRow {
   row_count: number;
   player_count: number;
   deposit_kind: 'first' | 'total';
+  currency_rates: Record<string, number>;
   created_at: string;
 }
 
@@ -240,7 +242,7 @@ export async function fetchImports(periodIds: string[]): Promise<ImportRow[]> {
   if (!periodIds.length) return [];
   const { data, error } = await supabase
     .from('imports')
-    .select('id,period_id,source,file_name,row_count,player_count,deposit_kind,created_at')
+    .select('id,period_id,source,file_name,row_count,player_count,deposit_kind,currency_rates,created_at')
     .in('period_id', periodIds)
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -329,4 +331,125 @@ export async function saveImport(i: SaveImportInput): Promise<string> {
 export async function deleteImport(id: string) {
   const { error } = await supabase.from('imports').delete().eq('id', id);
   if (error) throw error;
+}
+
+// ---------------- Configurações ----------------
+export const DEFAULT_TOLERANCE = 1;
+
+export async function fetchTolerance(): Promise<number> {
+  const { data, error } = await supabase.from('app_settings').select('tolerance_usd').maybeSingle();
+  if (error) throw error;
+  return data ? Number(data.tolerance_usd) : DEFAULT_TOLERANCE;
+}
+
+export async function saveTolerance(tolerance: number) {
+  const { error } = await supabase.from('app_settings').upsert({ tolerance_usd: tolerance, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  if (error) throw error;
+  window.dispatchEvent(new Event('revwin:settings'));
+}
+
+// ---------------- Conferência (Etapa 3) ----------------
+
+export interface ImportRecords {
+  records: RecRecord[];
+  rowsWithoutId: number; // linhas do arquivo que não viraram jogador (sem ID / resumo)
+}
+
+/** Registros individuais de uma importação (paginado) + linhas sem ID. */
+export async function fetchImportRecords(imp: ImportRow): Promise<ImportRecords> {
+  const out: RecRecord[] = [];
+  let rawRows = 0;
+  const page = 1000;
+  for (let from = 0; ; from += page) {
+    const { data, error } = await supabase
+      .from('player_records')
+      .select('player_id,deposit_amount,deposit_currency,deposit_usd,deposit_count,bets_usd,raw')
+      .eq('import_id', imp.id)
+      .order('player_id')
+      .range(from, from + page - 1);
+    if (error) throw error;
+    (data ?? []).forEach((r: any) => {
+      rawRows += Array.isArray(r.raw) ? r.raw.length : 1;
+      out.push({
+        player_id: r.player_id,
+        deposit_amount: n(r.deposit_amount),
+        deposit_currency: r.deposit_currency,
+        deposit_usd: n(r.deposit_usd),
+        deposit_count: r.deposit_count ?? 0,
+        bets_usd: n(r.bets_usd),
+      });
+    });
+    if (!data || data.length < page) break;
+  }
+  return { records: out, rowsWithoutId: Math.max(0, imp.row_count - rawRows) };
+}
+
+export interface ReconciliationRow {
+  id: string;
+  period_id: string;
+  ia_import_id: string | null;
+  house_import_id: string | null;
+  tolerance_usd: number;
+  rates: Record<string, number>;
+  summary: RecSummary;
+  items: RecItem[];
+  qftd: number | null;
+  baseline_count: number | null;
+  divergences: number;
+  updated_at: string;
+}
+
+const normRec = (r: any): ReconciliationRow => ({ ...r, tolerance_usd: Number(r.tolerance_usd) });
+
+export async function fetchReconciliation(periodId: string): Promise<ReconciliationRow | null> {
+  const { data, error } = await supabase.from('reconciliations').select('*').eq('period_id', periodId).maybeSingle();
+  if (error) throw error;
+  return data ? normRec(data) : null;
+}
+
+/** Resumo das conferências (sem a tabela de itens) para vários períodos. */
+export async function fetchReconciliationSummaries(periodIds: string[]) {
+  if (!periodIds.length) return [] as Omit<ReconciliationRow, 'items'>[];
+  const { data, error } = await supabase
+    .from('reconciliations')
+    .select('id,period_id,ia_import_id,house_import_id,tolerance_usd,rates,summary,qftd,baseline_count,divergences,updated_at')
+    .in('period_id', periodIds);
+  if (error) throw error;
+  return (data ?? []).map(normRec) as Omit<ReconciliationRow, 'items'>[];
+}
+
+export async function saveReconciliation(i: {
+  periodId: string;
+  iaImportId: string;
+  houseImportId: string;
+  tolerance: number;
+  rates: Record<string, number>;
+  summary: RecSummary;
+  items: RecItem[];
+}) {
+  const { error } = await supabase.rpc('save_reconciliation', {
+    p_period_id: i.periodId,
+    p_ia_import_id: i.iaImportId,
+    p_house_import_id: i.houseImportId,
+    p_tolerance: i.tolerance,
+    p_rates: i.rates,
+    p_summary: i.summary,
+    p_items: i.items,
+    p_qftd: i.summary.qualified_count,
+    p_baseline_count: i.summary.baseline_count,
+    p_divergences: i.summary.divergences,
+  });
+  if (error) throw error;
+}
+
+/** Edita as informações manuais da casa no período (faturado e observações). */
+export async function updateHousePeriodManual(id: string, v: { total_revenue_usd: number | null; notes: string | null }) {
+  const { error } = await supabase.from('periods').update(v).eq('id', id);
+  if (error) throw error;
+}
+
+export async function fetchPeriodById(id: string): Promise<Period | null> {
+  const { data, error } = await supabase.from('periods').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ? normalizePeriod(data) : null;
 }

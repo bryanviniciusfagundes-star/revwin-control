@@ -6,7 +6,8 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Operations from './pages/Operations';
 import Results from './pages/Results';
-import ComingSoon from './pages/ComingSoon';
+import History from './pages/History';
+import HistoryDetail from './pages/HistoryDetail';
 import ImportPage from './pages/Import';
 
 export default function App() {
@@ -27,7 +28,8 @@ export default function App() {
         <Route path="operacoes" element={<Operations />} />
         <Route path="resultados" element={<Results />} />
         <Route path="importar" element={<ImportPage />} />
-        <Route path="historico" element={<ComingSoon title="Histórico" stage="Etapa 3" />} />
+        <Route path="historico" element={<History />} />
+        <Route path="historico/:id" element={<HistoryDetail />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
