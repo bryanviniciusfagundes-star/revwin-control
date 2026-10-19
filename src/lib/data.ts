@@ -453,3 +453,9 @@ export async function fetchPeriodById(id: string): Promise<Period | null> {
   if (error) throw error;
   return data ? normalizePeriod(data) : null;
 }
+
+/** Exclui um período de casa sem importações (o banco recusa se houver CSV vinculado). */
+export async function deleteHousePeriod(id: string) {
+  const { error } = await supabase.from('periods').delete().eq('id', id);
+  if (error) throw error;
+}

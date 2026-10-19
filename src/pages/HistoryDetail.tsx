@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, FileText } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, FileText, Trash2 } from 'lucide-react';
 import {
+  deleteHousePeriod,
   fetchFunnelPeriods,
   fetchImports,
   fetchOperations,
@@ -22,6 +23,7 @@ import { reconState } from './History';
 
 export default function HistoryDetail() {
   const { id } = useParams();
+  const nav = useNavigate();
   const [period, setPeriod] = useState<Period | null>(null);
   const [op, setOp] = useState<Operation | null>(null);
   const [imports, setImports] = useState<ImportRow[]>([]);
@@ -76,6 +78,16 @@ export default function HistoryDetail() {
       setError(friendlyError(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function removePeriod() {
+    if (!period || !confirm('Excluir este período da casa? Ele não tem CSV importado. O funil da operação não é afetado.')) return;
+    try {
+      await deleteHousePeriod(period.id);
+      nav('/historico');
+    } catch (e) {
+      setError((e as { code?: string }).code === '23503' ? 'Não é possível excluir: o período tem importações. Exclua os CSVs antes.' : friendlyError(e));
     }
   }
 
@@ -171,6 +183,14 @@ export default function HistoryDetail() {
               <Button type="submit" loading={saving}>Salvar</Button>
             </div>
           </form>
+          {imports.length === 0 && (
+            <div className="mt-5 border-t border-zinc-800 pt-4">
+              <p className="mb-2 text-xs text-zinc-500">Período sem CSV importado. Se foi criado por engano ou com datas erradas, pode ser excluído.</p>
+              <Button variant="danger" onClick={removePeriod}>
+                <Trash2 className="h-4 w-4" /> Excluir período
+              </Button>
+            </div>
+          )}
         </Card>
       </div>
 

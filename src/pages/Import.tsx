@@ -150,7 +150,8 @@ export default function ImportPage() {
         {!checking && conflict && (
           <Alert>
             Já existe um período {fmtRange(conflict.start_date, conflict.end_date)} para esta operação e casa que se sobrepõe às datas escolhidas.
-            Use exatamente as mesmas datas ou escolha datas que não se cruzem.
+            Use exatamente as mesmas datas, escolha datas que não se cruzem ou{' '}
+            <Link to={`/historico/${conflict.id}`} className="underline hover:text-white">abra esse período no Histórico</Link> para conferir ou excluir (se estiver vazio).
           </Alert>
         )}
         {!checking && ctx && (
