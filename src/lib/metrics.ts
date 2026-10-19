@@ -1,18 +1,4 @@
-import type { NumericPeriodKey, Period } from './types';
-
-/**
- * Regras de cálculo das porcentagens — altere aqui se quiser outra base.
- *   % no pitch      = Chegou ao pitch / Leads
- *   % depositou     = FTD IA / Registros
- *   % qualificou    = QFTD / FTD IA
- *   % acessou canal = Acessou canal / FTD IA
- */
-export const RATES: { key: string; label: string; num: NumericPeriodKey; den: NumericPeriodKey; hint: string }[] = [
-  { key: 'pitch', label: '% no pitch', num: 'reached_pitch', den: 'leads', hint: 'Chegou ao pitch ÷ Leads' },
-  { key: 'deposit', label: '% depositou', num: 'ftd_ia', den: 'registrations', hint: 'FTD IA ÷ Registros' },
-  { key: 'qualified', label: '% qualificou', num: 'qftd', den: 'ftd_ia', hint: 'QFTD ÷ FTD IA' },
-  { key: 'channel', label: '% acessou canal', num: 'accessed_channel', den: 'ftd_ia', hint: 'Acessou canal ÷ FTD IA' },
-];
+import type { FunnelPeriod, NumericFunnelKey, NumericPeriodKey, Period } from './types';
 
 /** Divisão segura: retorna null se faltar dado ou se o denominador for 0. */
 export function pct(num: number | null | undefined, den: number | null | undefined): number | null {
@@ -21,14 +7,66 @@ export function pct(num: number | null | undefined, den: number | null | undefin
 }
 
 /** Soma ignorando ausentes. Se todos forem ausentes, retorna null (não 0). */
-export function sumField(rows: Period[], key: NumericPeriodKey): number | null {
-  const vals = rows.map((r) => r[key]).filter((v): v is number => v != null);
+export function sumField<T>(rows: T[], key: keyof T): number | null {
+  const vals = rows.map((r) => r[key] as unknown as number | null).filter((v): v is number => v != null);
   return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
 }
 
-/** Taxa agregada usando só os períodos que têm numerador E denominador. */
-export function aggregateRate(rows: Period[], num: NumericPeriodKey, den: NumericPeriodKey): number | null {
+/** Taxa usando só as linhas que têm numerador E denominador. */
+export function aggregateRate<T>(rows: T[], num: keyof T, den: keyof T): number | null {
   const both = rows.filter((r) => r[num] != null && r[den] != null);
   if (!both.length) return null;
   return pct(sumField(both, num), sumField(both, den));
 }
+
+export interface Totals {
+  leads: number | null;
+  reached_pitch: number | null;
+  accessed_channel: number | null;
+  sendpulse_deposits: number | null;
+  registrations: number | null;
+  ftd_ia: number | null;
+  ftd_panel: number | null;
+  qftd: number | null;
+  deposits_sum_usd: number | null;
+  total_revenue_usd: number | null;
+}
+
+/**
+ * Junta o funil da operação (null quando filtrado por casa) com os dados das casas.
+ */
+export function computeTotals(funnels: FunnelPeriod[] | null, houses: Period[]): Totals {
+  const f = (k: NumericFunnelKey) => (funnels ? sumField(funnels, k) : null);
+  const h = (k: NumericPeriodKey) => sumField(houses, k);
+  return {
+    leads: f('leads'),
+    reached_pitch: f('reached_pitch'),
+    accessed_channel: f('accessed_channel'),
+    sendpulse_deposits: f('sendpulse_deposits'),
+    registrations: h('registrations'),
+    ftd_ia: h('ftd_ia'),
+    ftd_panel: h('ftd_panel'),
+    qftd: h('qftd'),
+    deposits_sum_usd: h('deposits_sum_usd'),
+    total_revenue_usd: h('total_revenue_usd'),
+  };
+}
+
+/**
+ * Regras das porcentagens — altere aqui se quiser outra base.
+ *   % no pitch      = Chegou ao pitch / Leads                (funil da operação)
+ *   % depositou     = FTD IA / Registros                     (casas)
+ *   % qualificou    = QFTD / FTD IA                          (casas)
+ *   % acessou canal = Acessou canal / FTD IA (soma das casas)
+ */
+export const RATES: {
+  key: string;
+  label: string;
+  hint: string;
+  calc: (t: Totals, funnels: FunnelPeriod[] | null, houses: Period[]) => number | null;
+}[] = [
+  { key: 'pitch', label: '% no pitch', hint: 'Chegou ao pitch ÷ Leads', calc: (_t, f) => (f ? aggregateRate(f, 'reached_pitch', 'leads') : null) },
+  { key: 'deposit', label: '% depositou', hint: 'FTD IA ÷ Registros', calc: (_t, _f, h) => aggregateRate(h, 'ftd_ia', 'registrations') },
+  { key: 'qualified', label: '% qualificou', hint: 'QFTD ÷ FTD IA', calc: (_t, _f, h) => aggregateRate(h, 'qftd', 'ftd_ia') },
+  { key: 'channel', label: '% acessou canal', hint: 'Acessou canal ÷ FTD IA', calc: (t) => pct(t.accessed_channel, t.ftd_ia) },
+];

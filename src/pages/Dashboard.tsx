@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { fetchOperations, fetchPeriods, friendlyError } from '../lib/data';
-import type { NumericPeriodKey, Operation, Period } from '../lib/types';
-import { RATES, aggregateRate, sumField } from '../lib/metrics';
+import { fetchFunnelPeriods, fetchOperations, fetchPeriods, friendlyError } from '../lib/data';
+import type { FunnelPeriod, Operation, Period } from '../lib/types';
+import { RATES, computeTotals, type Totals } from '../lib/metrics';
 import { fmtInt, fmtPct, fmtRange, fmtShortDate, fmtUSD, localISO } from '../lib/format';
 import { Alert, Card, Empty, Field, Input, PageHeader, Select, Spinner } from '../components/ui';
 
-const COUNTS: { key: NumericPeriodKey; label: string }[] = [
-  { key: 'leads', label: 'Leads' },
-  { key: 'reached_pitch', label: 'Chegou ao pitch' },
+const COUNTS: { key: keyof Totals; label: string; funnel?: boolean }[] = [
+  { key: 'leads', label: 'Leads', funnel: true },
+  { key: 'reached_pitch', label: 'Chegou ao pitch', funnel: true },
   { key: 'registrations', label: 'Registros' },
   { key: 'ftd_ia', label: 'FTD IA' },
   { key: 'ftd_panel', label: 'FTD painel' },
   { key: 'qftd', label: 'QFTD' },
-  { key: 'accessed_channel', label: 'Acessou canal' },
+  { key: 'accessed_channel', label: 'Acessou canal', funnel: true },
 ];
 
 function Stat({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent?: boolean }) {
@@ -32,6 +32,7 @@ const addNullable = (a: number | null, b: number | null) => (a == null ? b : b =
 export default function Dashboard() {
   const [ops, setOps] = useState<Operation[]>([]);
   const [periods, setPeriods] = useState<Period[]>([]);
+  const [funnels, setFunnels] = useState<FunnelPeriod[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [opId, setOpId] = useState('');
@@ -47,8 +48,14 @@ export default function Dashboard() {
     if (from && to && to < from) return;
     setLoading(true);
     setError('');
-    fetchPeriods({ operationId: opId || undefined, houseId: houseId || undefined, from, to })
-      .then(setPeriods)
+    Promise.all([
+      fetchPeriods({ operationId: opId || undefined, houseId: houseId || undefined, from, to }),
+      fetchFunnelPeriods({ operationId: opId || undefined, from, to }),
+    ])
+      .then(([p, f]) => {
+        setPeriods(p);
+        setFunnels(f);
+      })
       .catch((e) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
   }, [opId, houseId, from, to]);
@@ -73,7 +80,11 @@ export default function Dashboard() {
     return [...groups.values()].sort((a, b) => a.start.localeCompare(b.start));
   }, [periods]);
   const hasChartData = chart.some((c) => c.ftd != null || c.qftd != null);
-  const noImportYet = periods.length > 0 && periods.every((p) => p.ftd_ia == null && p.ftd_panel == null);
+  // filtrando por casa, o funil (que é da operação) não se aplica
+  const funnelRows = houseId ? null : funnels;
+  const totals = computeTotals(funnelRows, periods);
+  const isEmpty = periods.length === 0 && (funnelRows?.length ?? 0) === 0;
+  const noImportYet = !isEmpty && periods.every((p) => p.ftd_ia == null && p.ftd_panel == null);
 
   return (
     <>
@@ -105,34 +116,35 @@ export default function Dashboard() {
 
       {loading ? (
         <div className="flex justify-center py-20"><Spinner /></div>
-      ) : periods.length === 0 ? (
+      ) : isEmpty ? (
         <Card><Empty title="Nenhum registro neste período">Ajuste os filtros ou registre resultados.</Empty></Card>
       ) : (
         <>
-          {noImportYet && (
-            <div className="mb-4">
-              <Alert kind="info">Registros, FTDs, QFTD e depósitos aparecem como "—" até a importação dos CSVs (Etapa 2).</Alert>
+          {(noImportYet || houseId) && (
+            <div className="mb-4 space-y-2">
+              {noImportYet && <Alert kind="info">Registros, FTDs, QFTD e depósitos aparecem como "—" até a importação dos CSVs das casas.</Alert>}
+              {houseId && <Alert kind="info">Leads, pitch, canal e SendPulse são da operação inteira e não aparecem no filtro por casa.</Alert>}
             </div>
           )}
 
           <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">Funil</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {COUNTS.map((c) => (
-              <Stat key={c.key} label={c.label} value={fmtInt(sumField(periods, c.key))} />
+              <Stat key={c.key} label={c.label} value={fmtInt(totals[c.key])} hint={c.funnel ? 'operação' : 'soma das casas'} />
             ))}
           </div>
 
           <h2 className="mb-3 mt-6 text-xs font-medium uppercase tracking-wider text-zinc-500">Conversão</h2>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {RATES.map((r) => (
-              <Stat key={r.key} label={r.label} value={fmtPct(aggregateRate(periods, r.num, r.den))} hint={r.hint} />
+              <Stat key={r.key} label={r.label} value={fmtPct(r.calc(totals, funnelRows, periods))} hint={r.hint} />
             ))}
           </div>
 
           <h2 className="mb-3 mt-6 text-xs font-medium uppercase tracking-wider text-zinc-500">Financeiro</h2>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Soma de depósitos" value={fmtUSD(sumField(periods, 'deposits_sum_usd'))} />
-            <Stat label="Total faturado" value={fmtUSD(sumField(periods, 'total_revenue_usd'))} accent />
+            <Stat label="Soma de depósitos" value={fmtUSD(totals.deposits_sum_usd)} />
+            <Stat label="Total faturado" value={fmtUSD(totals.total_revenue_usd)} accent />
           </div>
 
           <Card className="mt-6 p-4">

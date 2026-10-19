@@ -32,18 +32,29 @@ export interface Operation {
   houses: OperationHouse[];
 }
 
-/** Valores ausentes são sempre null — nunca 0. */
+/** Funil da operação (não se separa por casa). Ausente = null, nunca 0. */
+export interface FunnelPeriod {
+  id: string;
+  operation_id: string;
+  start_date: string;
+  end_date: string;
+  leads: number | null;
+  reached_pitch: number | null;
+  accessed_channel: number | null;
+  sendpulse_deposits: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Dados de uma casa no período (importações + faturado). Ausente = null, nunca 0. */
 export interface Period {
   id: string;
   operation_id: string;
   house_id: string;
   start_date: string; // yyyy-mm-dd
   end_date: string;
-  // manuais
-  leads: number | null;
-  reached_pitch: number | null;
-  accessed_channel: number | null;
-  sendpulse_deposits: number | null;
+  // manual (por casa)
   total_revenue_usd: number | null;
   notes: string | null;
   // vindos da importação (Etapas 2/3)
@@ -56,11 +67,9 @@ export interface Period {
   updated_at: string;
 }
 
+export type NumericFunnelKey = 'leads' | 'reached_pitch' | 'accessed_channel' | 'sendpulse_deposits';
+
 export type NumericPeriodKey =
-  | 'leads'
-  | 'reached_pitch'
-  | 'accessed_channel'
-  | 'sendpulse_deposits'
   | 'total_revenue_usd'
   | 'registrations'
   | 'ftd_ia'

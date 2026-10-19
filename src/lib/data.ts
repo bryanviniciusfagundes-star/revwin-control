@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { BetsOperator, House, Operation, OperationStatus, Period } from './types';
+import type { BetsOperator, FunnelPeriod, House, Operation, OperationStatus, Period } from './types';
 import { parseRate, type ImportOptions, type PlayerRecord, type Source } from './csv';
 
 /** Traduz erros do banco para mensagens claras. */
@@ -14,6 +14,7 @@ export function friendlyError(e: unknown): string {
       return 'Não é possível excluir: existem dados vinculados.';
     case 'RV001':
     case 'RV002':
+    case 'RV003':
       return err.message ?? 'Importação recusada.';
     case '23514':
       return 'Algum valor está fora do permitido (datas invertidas ou número negativo).';
@@ -135,10 +136,6 @@ export async function deleteOperation(id: string) {
 function normalizePeriod(p: any): Period {
   return {
     ...p,
-    leads: n(p.leads),
-    reached_pitch: n(p.reached_pitch),
-    accessed_channel: n(p.accessed_channel),
-    sendpulse_deposits: n(p.sendpulse_deposits),
     total_revenue_usd: n(p.total_revenue_usd),
     registrations: n(p.registrations),
     ftd_ia: n(p.ftd_ia),
@@ -169,34 +166,60 @@ export async function fetchPeriods(f: PeriodFilter = {}): Promise<Period[]> {
   return (data ?? []).map(normalizePeriod);
 }
 
-export interface ManualPeriodInput {
+// ---------------- Funil da operação ----------------
+function normalizeFunnel(f: any): FunnelPeriod {
+  return {
+    ...f,
+    leads: n(f.leads),
+    reached_pitch: n(f.reached_pitch),
+    accessed_channel: n(f.accessed_channel),
+    sendpulse_deposits: n(f.sendpulse_deposits),
+  };
+}
+
+export async function fetchFunnelPeriods(f: Omit<PeriodFilter, 'houseId'> = {}): Promise<FunnelPeriod[]> {
+  let q = supabase.from('funnel_periods').select('*').order('start_date', { ascending: !f.newestFirst });
+  if (f.operationId) q = q.eq('operation_id', f.operationId);
+  if (f.to) q = q.lte('start_date', f.to);
+  if (f.from) q = q.gte('end_date', f.from);
+  if (f.limit) q = q.limit(f.limit);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []).map(normalizeFunnel);
+}
+
+export interface FunnelInput {
   id?: string;
   operation_id: string;
-  house_id: string;
   start_date: string;
   end_date: string;
   leads: number | null;
   reached_pitch: number | null;
   accessed_channel: number | null;
   sendpulse_deposits: number | null;
-  total_revenue_usd: number | null;
   notes: string | null;
+  revenues: { house_id: string; revenue: number | null }[];
 }
 
-/** Salva somente os campos manuais — nunca sobrescreve dados vindos da importação. */
-export async function saveManualPeriod(input: ManualPeriodInput) {
-  const { id, ...payload } = input;
-  if (id) {
-    const { error } = await supabase.from('periods').update(payload).eq('id', id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase.from('periods').insert(payload);
-    if (error) throw error;
-  }
+/** Salva o funil e o faturado de cada casa numa única transação. */
+export async function saveFunnel(i: FunnelInput) {
+  const { error } = await supabase.rpc('save_funnel', {
+    p_id: i.id ?? null,
+    p_operation_id: i.operation_id,
+    p_start: i.start_date,
+    p_end: i.end_date,
+    p_leads: i.leads,
+    p_reached_pitch: i.reached_pitch,
+    p_accessed_channel: i.accessed_channel,
+    p_sendpulse: i.sendpulse_deposits,
+    p_notes: i.notes,
+    p_revenues: i.revenues,
+  });
+  if (error) throw error;
 }
 
-export async function deletePeriod(id: string) {
-  const { error } = await supabase.from('periods').delete().eq('id', id);
+export async function deleteFunnel(id: string) {
+  const { error } = await supabase.from('funnel_periods').delete().eq('id', id);
   if (error) throw error;
 }
 
