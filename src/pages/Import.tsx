@@ -423,7 +423,10 @@ function ImportPanel({ source, ctx, existing, onSaved }: { source: Source; ctx: 
               <Warnings
                 items={[
                   st.multiRowPlayers > 0 &&
-                    `${fmtInt(st.multiRowPlayers)} jogador(es) aparecem em mais de uma linha — foram unidos em 1 registro (${opt.depositKind === 'first' ? 'depósito da data mais antiga' : 'soma dos depósitos'}, apostas somadas, quantidade de depósitos guardada).`,
+                    `${fmtInt(st.multiRowPlayers)} ID(s) aparecem em mais de uma linha (${st.repeatedIds.slice(0, 5).join(', ')}${st.repeatedIds.length > 5 ? '…' : ''}) — foram unidos em 1 registro (${opt.depositKind === 'first' ? 'depósito da data mais antiga' : 'soma dos depósitos'}). Confira se não são leads diferentes usando a mesma conta.`,
+                  st.nonPlayerRows.length > 0 && `Linha(s) de resumo ignorada(s), sem ID de jogador: ${st.nonPlayerRows.map((x) => `“${x}”`).join(', ')}.`,
+                  st.cleanedIds.length > 0 && `ID(s) com prefixo limpos para comparar com a casa: ${st.cleanedIds.map((x) => `“${x}”`).join(', ')}.`,
+                  st.noCurrencyPlayers > 0 && `${fmtInt(st.noCurrencyPlayers)} jogador(es) com depósito mas sem moeda — ficam sem conversão para USD.`,
                   st.badNumberCount > 0 && `${fmtInt(st.badNumberCount)} valor(es) numérico(s) ilegíveis ficaram vazios. Ex.: ${st.badNumbers.map((x) => `“${x}”`).join(', ')}`,
                   st.badDateCount > 0 && `${fmtInt(st.badDateCount)} data(s) ilegíveis ficaram vazias. Ex.: ${st.badDates.map((x) => `“${x}”`).join(', ')}`,
                   st.outOfPeriod > 0 && `${fmtInt(st.outOfPeriod)} jogador(es) com data fora do período escolhido.`,

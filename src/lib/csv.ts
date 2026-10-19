@@ -9,10 +9,11 @@ import Papa from 'papaparse';
 export type Source = 'ia' | 'house';
 export const SOURCE_LABEL: Record<Source, string> = { ia: 'IA / Revwin', house: 'Casa de apostas' };
 
-export type FieldKey = 'id' | 'deposit' | 'currency' | 'bets' | 'date' | 'status';
+export type FieldKey = 'id' | 'deposit' | 'deposit_count' | 'currency' | 'bets' | 'date' | 'status';
 export const FIELDS: { key: FieldKey; label: string; required?: boolean }[] = [
   { key: 'id', label: 'ID do jogador', required: true },
-  { key: 'deposit', label: 'Depósito' },
+  { key: 'deposit', label: 'Depósito (valor)' },
+  { key: 'deposit_count', label: 'Qtd. de depósitos' },
   { key: 'currency', label: 'Moeda' },
   { key: 'bets', label: 'Apostas' },
   { key: 'date', label: 'Data' },
@@ -60,6 +61,9 @@ export interface NormalizeResult {
   stats: {
     dataRows: number;
     rowsWithoutId: number;
+    nonPlayerRows: string[]; // linhas de resumo sem ID de jogador (ex.: "Não registrado")
+    cleanedIds: string[]; // IDs com prefixo removido (ex.: "Nº1741286581")
+    repeatedIds: string[]; // IDs que aparecem em mais de uma linha
     players: number;
     multiRowPlayers: number;
     ftd: number; // jogadores com depósito > 0
@@ -72,6 +76,7 @@ export interface NormalizeResult {
     currencies: string[];
     missingRates: string[];
     mixedCurrencyPlayers: number;
+    noCurrencyPlayers: number; // têm depósito mas a moeda está vazia → sem conversão
     detectedDecimal: ',' | '.';
     detectedDateFormat: Exclude<DateFormat, 'auto'>;
   };
@@ -105,23 +110,44 @@ export async function readCsvFile(file: File): Promise<ParsedFile> {
   return { name: file.name, hash, text, headers, rows, delimiter: parsed.meta.delimiter };
 }
 
-/** Sugestão de mapeamento pelo nome das colunas. */
+/**
+ * Sugestão de mapeamento pelo nome das colunas.
+ * Cada campo tem padrões em ordem de prioridade; o primeiro que casar com
+ * uma coluna ainda livre vence. Padrões de exclusão evitam confusões comuns
+ * (Telegram ID ≠ ID na casa; "Depósitos" = quantidade, "Depósitos, $" = valor).
+ */
 export function suggestColumns(headers: string[]): ColumnMap {
-  const rules: [FieldKey, RegExp][] = [
-    ['id', /(^id$|player|jogador|usu[aá]rio|user|cliente|account|conta|\bid\b)/i],
-    ['deposit', /(dep[oó]sit|ftd.*(valor|amount|monto)|^valor$|^monto|amount)/i],
-    ['currency', /(moeda|moneda|currency|^curr|divisa)/i],
-    ['bets', /(apost|apuest|\bbets?\b|wager|stake|turnover)/i],
-    ['date', /(^data|date|fecha|^dia$|registro em)/i],
-    ['status', /(status|estado|situa)/i],
+  const rules: { key: FieldKey; patterns: RegExp[]; exclude?: RegExp }[] = [
+    {
+      key: 'id',
+      patterns: [/(n[ºo°.]?\s*(da|de)?\s*conta|account|conta)/i, /(id.*(jogador|player|usu[aá]rio|user|cliente|customer|member))|(jogador|player|usu[aá]rio|user|cliente|customer|member)[\s_-]*id/i, /^(player|jogador|usu[aá]rio|user|cliente|customer|member|login)$/i, /^id$/i],
+      exclude: /(telegram|whats|chat|lead|expert|campanha|campaign)/i,
+    },
+    {
+      key: 'deposit',
+      patterns: [/dep[oó]sit.*(\$|usd|valor|amount|monto|soma|total)/i, /(saldo.*dep[oó]sit|dep[oó]sit.*saldo)/i, /(ftd.*(valor|amount|monto))|^valor$|^monto|amount/i, /dep[oó]sit/i],
+      exclude: /(m[ií]nimo|minimo|min\b|jogadores|players|quantidade|qtd|count|n[ºo°]\s*de)/i,
+    },
+    {
+      key: 'deposit_count',
+      patterns: [/(qtd|quantidade|n[ºo°]\s*de|count|n[uú]mero).*dep[oó]sit/i, /^dep[oó]sitos?$/i],
+      exclude: /(\$|usd|valor|amount|jogadores|players)/i,
+    },
+    { key: 'currency', patterns: [/(moeda|moneda|currency|^curr|divisa)/i] },
+    { key: 'bets', patterns: [/(apost|apuest|\bbets?\b|wager|stake|turnover).*(\$|usd|valor|amount|soma|total)/i, /(apost|apuest|\bbets?\b|wager|stake|turnover)/i], exclude: /(jogadores|players|quantidade|qtd|count)/i },
+    { key: 'date', patterns: [/(^data|date|fecha|^dia$|registro em)/i] },
+    { key: 'status', patterns: [/(status|estado|situa)/i] },
   ];
   const map: ColumnMap = {};
   const used = new Set<string>();
-  for (const [key, re] of rules) {
-    const h = headers.find((x) => re.test(x) && !used.has(x));
-    if (h) {
-      map[key] = h;
-      used.add(h);
+  for (const { key, patterns, exclude } of rules) {
+    for (const re of patterns) {
+      const h = headers.find((x) => re.test(x) && !used.has(x) && !(exclude && exclude.test(x)));
+      if (h) {
+        map[key] = h;
+        used.add(h);
+        break;
+      }
     }
   }
   return map;
@@ -222,7 +248,25 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function normalize(file: ParsedFile, opt: ImportOptions, period?: { start: string; end: string }): NormalizeResult {
   const idx = (k: FieldKey) => (opt.columns[k] ? file.headers.indexOf(opt.columns[k]!) : -1);
-  const iId = idx('id'), iDep = idx('deposit'), iCur = idx('currency'), iBet = idx('bets'), iDate = idx('date'), iSt = idx('status');
+  const iId = idx('id'), iDep = idx('deposit'), iCnt = idx('deposit_count'), iCur = idx('currency'), iBet = idx('bets'), iDate = idx('date'), iSt = idx('status');
+
+  // IDs numéricos: se a maioria é só dígitos, remove prefixos ("Nº1741286581" → "1741286581")
+  // e trata linhas sem nenhum dígito (ex.: "Não registrado") como resumo, não jogador.
+  const rawIds = iId >= 0 ? file.rows.map((r) => r[iId].trim()).filter(Boolean) : [];
+  const numericIds = rawIds.length > 0 && rawIds.filter((x) => /^\d+$/.test(x)).length / rawIds.length >= 0.8;
+  const cleanedIds: string[] = [];
+  const nonPlayerRows: string[] = [];
+  const cleanId = (raw: string): string | null => {
+    const t = raw.trim();
+    if (!t || !numericIds || /^\d+$/.test(t)) return t;
+    const d = t.replace(/\D/g, '');
+    if (!d) {
+      if (nonPlayerRows.length < 5) nonPlayerRows.push(t);
+      return null;
+    }
+    if (cleanedIds.length < 5) cleanedIds.push(t);
+    return d;
+  };
 
   const numericValues = file.rows.flatMap((r) => [iDep >= 0 ? r[iDep] : '', iBet >= 0 ? r[iBet] : ''].filter(Boolean));
   const dec = opt.decimal === 'auto' ? detectDecimal(numericValues) : opt.decimal;
@@ -246,8 +290,13 @@ export function normalize(file: ParsedFile, opt: ImportOptions, period?: { start
 
   // agrupa linhas por jogador
   const groups = new Map<string, { rows: string[][]; order: number }>();
+  let nonPlayerCount = 0;
   file.rows.forEach((r, order) => {
-    const id = iId >= 0 ? r[iId].trim() : '';
+    const id = iId >= 0 ? cleanId(r[iId]) : '';
+    if (id === null) {
+      nonPlayerCount++;
+      return;
+    }
     if (!id) {
       rowsWithoutId++;
       return;
@@ -275,6 +324,7 @@ export function normalize(file: ParsedFile, opt: ImportOptions, period?: { start
         r,
         dep: iDep >= 0 ? num(r[iDep]) : null,
         bet: iBet >= 0 ? num(r[iBet]) : null,
+        cnt: iCnt >= 0 ? num(r[iCnt]) : null,
         cur: iCur >= 0 ? normalizeCurrency(r[iCur]) : normalizeCurrency(opt.fileCurrency),
         date,
       };
@@ -309,7 +359,10 @@ export function normalize(file: ParsedFile, opt: ImportOptions, period?: { start
       deposit_amount,
       deposit_currency: currency,
       deposit_usd: toUsd(deposit_amount),
-      deposit_count: withDep.filter((p) => (p.dep as number) > 0).length,
+      // com coluna de quantidade, usa o que a casa informa; senão, conta as linhas com depósito
+      deposit_count: iCnt >= 0
+        ? Math.max(0, Math.round(sorted.reduce((s, p) => s + (p.cnt ?? 0), 0)))
+        : withDep.filter((p) => (p.dep as number) > 0).length,
       bets_amount,
       bets_usd: toUsd(bets_amount),
       event_date,
@@ -322,8 +375,11 @@ export function normalize(file: ParsedFile, opt: ImportOptions, period?: { start
   return {
     records,
     stats: {
-      dataRows: file.rows.length,
+      dataRows: file.rows.length - nonPlayerCount,
       rowsWithoutId,
+      nonPlayerRows,
+      cleanedIds,
+      repeatedIds: [...groups.entries()].filter(([, g]) => g.rows.length > 1).map(([id]) => id),
       players: records.length,
       multiRowPlayers: [...groups.values()].filter((g) => g.rows.length > 1).length,
       ftd: records.filter((r) => r.deposit_amount != null && r.deposit_amount > 0).length,
@@ -336,6 +392,7 @@ export function normalize(file: ParsedFile, opt: ImportOptions, period?: { start
       currencies: curList,
       missingRates: curList.filter((c) => c !== 'USD' && parseRate(opt.rates[c]) == null),
       mixedCurrencyPlayers,
+      noCurrencyPlayers: records.filter((r) => r.deposit_amount != null && !r.deposit_currency).length,
       detectedDecimal: dec,
       detectedDateFormat: dateFmt,
     },
